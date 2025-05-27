@@ -1,0 +1,121 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function hasPhoneNumber() {
+      return isAuthenticated() && request.auth.token.phone_number != null;
+    }
+    
+    function isValidUser() {
+      return isAuthenticated() && hasPhoneNumber();
+    }
+    
+    // Users collection
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+      allow create: if isValidUser() && request.auth.uid == userId;
+    }
+    
+    // Vendors collection
+    match /vendors/{vendorId} {
+      // Anyone can read vendor data (for search)
+      allow read: if true;
+      
+      // Only the vendor can update their own data
+      allow write: if isOwner(vendorId);
+      
+      // Admin can create vendor accounts (implement admin check as needed)
+      allow create: if isValidUser();
+    }
+    
+    // Bookings collection
+    match /bookings/{bookingId} {
+      // Users can read their own bookings
+      allow read: if isValidUser() && 
+        (resource.data.user_id == request.auth.uid || 
+         resource.data.vendor_id == request.auth.uid);
+      
+      // Users can create bookings
+      allow create: if isValidUser() && 
+        request.auth.uid == resource.data.user_id;
+      
+      // Users and vendors can update bookings they're involved in
+      allow update: if isValidUser() && 
+        (resource.data.user_id == request.auth.uid || 
+         resource.data.vendor_id == request.auth.uid) &&
+        // Prevent changing core booking details
+        resource.data.user_id == request.resource.data.user_id &&
+        resource.data.vendor_id == request.resource.data.vendor_id &&
+        resource.data.service_type == request.resource.data.service_type;
+      
+      // No direct deletion - use status updates instead
+      allow delete: if false;
+    }
+    
+    // Notifications collection
+    match /notifications/{notificationId} {
+      // Users can read their own notifications
+      allow read: if isValidUser() && 
+        resource.data.user_id == request.auth.uid;
+      
+      // Users can update their own notifications (mark as read)
+      allow update: if isValidUser() && 
+        resource.data.user_id == request.auth.uid &&
+        // Only allow updating read status and read_at timestamp
+        resource.data.keys().diff(request.resource.data.keys()).size() == 0;
+      
+      // System can create notifications
+      allow create: if true; // This will be restricted by Firebase Functions
+      
+      // No deletion of notifications
+      allow delete: if false;
+    }
+    
+    // Analytics collections (read-only for users, write-only for system)
+    match /search_analytics/{analyticsId} {
+      allow read: if false; // Only system access
+      allow write: if false; // Only system access
+    }
+    
+    match /booking_analytics/{analyticsId} {
+      allow read: if false; // Only system access
+      allow write: if false; // Only system access
+    }
+    
+    match /rating_analytics/{analyticsId} {
+      allow read: if false; // Only system access
+      allow write: if false; // Only system access
+    }
+    
+    match /daily_analytics/{analyticsId} {
+      allow read: if false; // Only system access
+      allow write: if false; // Only system access
+    }
+    
+    // Service types collection (read-only reference data)
+    match /service_types/{serviceId} {
+      allow read: if true;
+      allow write: if false; // Only admin can modify
+    }
+    
+    // App configuration (read-only)
+    match /app_config/{configId} {
+      allow read: if true;
+      allow write: if false; // Only admin can modify
+    }
+    
+    // Default deny rule
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+} 
